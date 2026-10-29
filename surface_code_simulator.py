@@ -1,5 +1,4 @@
 import numpy as np
-
 class QuantumGate:
     def __init__(self, name, qubits, params=None):
         self.name = name          # e.g., 'CNOT', 'RZ', 'H'
