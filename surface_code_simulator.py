@@ -1,46 +1,68 @@
-import stim
-import pymatching
 import numpy as np
 
-def run_surface_code_simulation(distance=3, rounds=3, p_noise=0.005, num_shots=10000):
-    """
-    Simulates a Surface Code circuit using Stim, extracts the Detector Error Model (DEM),
-    samples syndromes with physical noise, and decodes using PyMatching to compute the logical error rate.
-    """
-    print(f"Building Surface Code Circuit: Distance d={distance}, Rounds={rounds}, Noise p={p_noise}")
-    
-    # 1. Generate surface code circuit using Stim's built-in circuit generator
-    # surface_code: rotated_memory_z is standard for memory experiments
-    circuit = stim.Circuit.generated(
-        "surface_code:rotated_memory_z",
-        distance=distance,
-        rounds=rounds,
-        after_clifford_depolarization=p_noise,
-        before_measure_flip_probability=p_noise,
-        after_reset_flip_probability=p_noise
-    )
-    
-    # 2. Extract the Detector Error Model (DEM) and Logical Observables
-    dem = circuit.detector_error_model(decompose_errors=True)
-    
-    # 3. Create a PyMatching decoder from the DEM
-    matcher = pymatching.Matching.from_detector_error_model(dem)
-    
-    # 4. Sample syndrome measurements and logical observables from the noisy circuit
-    sampler = circuit.compile_detector_sampler()
-    syndrome_data, actual_observables = sampler.sample(num_shots, separate_observables=True)
-    
-    # 5. Predict logical errors using PyMatching MWPM decoder
-    predicted_observables = matcher.decode_batch(syndrome_data)
-    
-    # 6. Calculate Logical Failure Rate
-    num_failures = np.sum(np.any(predicted_observables != actual_observables, axis=1))
-    failure_rate = num_failures / num_shots
-    
-    print(f"Simulation completed for {num_shots} shots.")
-    print(f"Logical Failure Rate: {failure_rate:.5f} (Failures: {num_failures}/{num_shots})")
-    
-    return failure_rate
+class QuantumGate:
+    def __init__(self, name, qubits, params=None):
+        self.name = name          # e.g., 'CNOT', 'RZ', 'H'
+        self.qubits = qubits      # tuple or list of qubit indices (e.g., (0, 1) or (0,))
+        self.params = params      # parameters for rotation gates (e.g., angle)
+
+    def __repr__(self):
+        return f"Gate({self.name}, qubits={self.qubits}, params={self.params})"
+
+
+class QuantumCircuitOptimizer:
+    def __init__(self, num_qubits):
+        self.num_qubits = num_qubits
+        self.gates = []
+
+    def add_gate(self, name, qubits, params=None):
+        self.gates.append(QuantumGate(name, qubits, params))
+
+    def optimize_cnot_cancellation(self):
+        """
+        Optimizes the circuit by cancelling adjacent self-inverse CNOT gates.
+        Since CNOT * CNOT = Identity, consecutive identical CNOT gates can be removed.
+        """
+        print(f"Running CNOT Cancellation on circuit with {len(self.gates)} initial gates...")
+        optimized_gates = []
+        i = 0
+        while i < len(self.gates):
+            current_gate = self.gates[i]
+            # Check if there is a next gate and if both are CNOTs acting on the exact same control/target qubits
+            if i + 1 < len(self.gates) and current_gate.name == 'CNOT' and self.gates[i+1].name == 'CNOT':
+                if current_gate.qubits == self.gates[i+1].qubits:
+                    # Cancel both gates (they annihilate each other)
+                    print(f"Optimized: Removed redundant CNOT pair on qubits {current_gate.qubits}")
+                    i += 2
+                    continue
+            optimized_gates.append(current_gate)
+            i += 1
+            
+        self.gates = optimized_gates
+        print(f"Optimization complete. Final gate count: {len(self.gates)}")
+        return self.gates
+
+    def get_circuit_depth(self):
+        """
+        Estimates the rough depth of the quantum circuit.
+        """
+        return len(self.gates)
+
 
 if __name__ == "__main__":
-    run_surface_code_simulation()
+    # Test the optimizer with a sample circuit containing redundant CNOTs
+    qc = QuantumCircuitOptimizer(num_qubits=3)
+    qc.add_gate('H', (0,))
+    qc.add_gate('CNOT', (0, 1))
+    qc.add_gate('CNOT', (0, 1))  # Redundant pair (should be removed)
+    qc.add_gate('RZ', (1,), params=np.pi/4)
+    qc.add_gate('CNOT', (1, 2))
+    qc.add_gate('CNOT', (1, 2))  # Redundant pair (should be removed)
+    
+    print("--- Before Optimization ---")
+    print(f"Total Gates: {len(qc.gates)}")
+    
+    qc.optimize_cnot_cancellation()
+    
+    print("\n--- After Optimization ---")
+    print(f"Total Gates: {len(qc.gates)}")
